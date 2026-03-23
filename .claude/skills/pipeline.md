@@ -1,5 +1,5 @@
 ---
-description: "전체 리드 생성 파이프라인을 한번에 실행합니다. 수집 → 점수 → 필터 → 이메일 초안 생성을 순차 실행합니다."
+description: "지능형 파이프라인 오케스트레이터. 각 단계 결과를 분석하고 상황에 맞게 판단하며 전체 리드 생성 파이프라인을 자동 실행합니다."
 ---
 
 # /pipeline 스킬
@@ -20,12 +20,20 @@ description: "전체 리드 생성 파이프라인을 한번에 실행합니다.
 npx tsx scripts/pipeline.ts <지역> <키워드> [수량]
 ```
 
-## 파이프라인 단계
-1. **collect**: Apify → Google Maps 스크래핑 → leads INSERT
-2. **score**: 리드 점수 매기기 → leads.score UPDATE
-3. **filter**: 60점 이상 → leads.status = 'filtered'
-4. **draft-email**: filtered 리드에 이메일 초안 생성 → email_logs INSERT
+## 파이프라인 단계 (오케스트레이터)
+1. **collect**: Apify → Google Maps 스크래핑 + 리뷰 텍스트 수집 (실패 시 1회 재시도)
+2. **enrich**: 이메일 보유율 분석 → 부족하면 공격적 크롤링, 충분하면 가볍게 (Jina fallback 포함)
+3. **score**: 점수 매기기 (breakdown 포함)
+4. **filter**: 점수 기준 자동 결정 (통과 리드 부족 시 기준 낮춤, 과다 시 올림)
+5. **draft-email**: 이메일 있는 리드만 초안 생성 + 전화 영업 리드 별도 분류
+
+## 오케스트레이터 판단 예시
+- 이메일 보유율 15% → "enrich 공격적 실행"
+- 60점 기준 통과 2개 → "기준 45점으로 하향"
+- Apify 크레딧 부족 → "파이프라인 중단 + 사용자 알림"
 
 ## 실행 후
-- 각 단계별 결과를 요약해서 보고하세요
+- 퍼널 보고서 (수집→보강→점수→필터→이메일 전환율)
+- 오케스트레이터 판단 이력
+- 전화 영업 대상 리드 수
 - "이메일 발송은 /send-email로 별도 컨펌 후 실행하세요" 안내
