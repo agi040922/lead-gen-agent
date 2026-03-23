@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import Link from "next/link";
 
 const STATUS_LABELS: Record<string, string> = {
   new: "신규",
@@ -145,7 +146,9 @@ export default async function Dashboard() {
               <tbody>
                 {data.recentLeads.map((lead: any) => (
                   <tr key={lead.id} className="border-t border-gray-100">
-                    <td className="px-4 py-2 font-medium">{lead.company_name}</td>
+                    <td className="px-4 py-2 font-medium">
+                      <Link href={`/leads/${lead.id}`} className="hover:underline">{lead.company_name}</Link>
+                    </td>
                     <td className="px-4 py-2">{lead.category || "-"}</td>
                     <td className="px-4 py-2">{lead.region || "-"}</td>
                     <td className="px-4 py-2">{lead.score}</td>
