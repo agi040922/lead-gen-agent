@@ -6,7 +6,7 @@ import { supabase } from './lib/supabase';
 // 이메일 패턴
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 
-const JINA_API_KEY = 'jina_145594523025474593d89cf5fb3ecceaY_1hGppa7cIvvEewR7NHV72fwk9y';
+const JINA_API_KEY = process.env.JINA_API_KEY || '';
 
 // Jina Reader API fallback (JS 렌더링 사이트용)
 // 브라우저 렌더링 후 HTML 원본을 반환 → 푸터/동적 콘텐츠까지 포함
