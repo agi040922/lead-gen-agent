@@ -11,6 +11,14 @@ if (!APIFY_TOKEN) {
 
 const ACTOR_ID = 'compass~crawler-google-places';
 
+interface ApifyReview {
+  name?: string;
+  text?: string;
+  textTranslated?: string;
+  stars?: number;
+  publishedAtDate?: string;
+}
+
 interface ApifyGoogleMapsResult {
   title: string;
   phone?: string;
@@ -21,6 +29,7 @@ interface ApifyGoogleMapsResult {
   reviewsCount?: number;
   reviewsDistribution?: Record<string, number>;
   email?: string;
+  reviews?: ApifyReview[];
 }
 
 export async function searchGoogleMaps(params: {
@@ -41,6 +50,9 @@ export async function searchGoogleMaps(params: {
         maxCrawledPlacesPerSearch: maxResults,
         language: 'ko',
         countryCode: 'kr',
+        maxReviews: 10,
+        scrapeReviewerName: true,
+        scrapeReviewText: true,
       }),
     }
   );

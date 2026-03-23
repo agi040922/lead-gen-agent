@@ -30,6 +30,17 @@ async function main() {
     // Apify로 Google Maps 데이터 수집
     const results = await searchGoogleMaps({ keyword, region, maxResults: count });
 
+    // 리뷰 텍스트를 요약 문자열로 변환
+    function summarizeReviews(reviews?: { text?: string; textTranslated?: string; stars?: number }[]): string | null {
+      if (!reviews || reviews.length === 0) return null;
+      const texts = reviews
+        .map((r) => r.text || r.textTranslated)
+        .filter(Boolean)
+        .map((t) => (t as string).slice(0, 100));
+      if (texts.length === 0) return null;
+      return texts.join(' | ');
+    }
+
     // leads 테이블에 INSERT
     const leads = results.map((r) => ({
       company_name: r.title,
@@ -40,6 +51,7 @@ async function main() {
       category: r.categoryName || keyword,
       region,
       review_count: r.reviewsCount || 0,
+      review_summary: summarizeReviews(r.reviews),
       source: 'google_maps',
       status: 'new',
       score: 0,

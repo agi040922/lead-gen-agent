@@ -6,6 +6,42 @@ import { supabase } from './lib/supabase';
 // 이메일 패턴
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 
+const JINA_API_KEY = 'jina_145594523025474593d89cf5fb3ecceaY_1hGppa7cIvvEewR7NHV72fwk9y';
+
+// Jina Reader API fallback (JS 렌더링 사이트용)
+// 브라우저 렌더링 후 HTML 원본을 반환 → 푸터/동적 콘텐츠까지 포함
+async function crawlWithJina(url: string): Promise<{ emails: string[]; html: string }> {
+  try {
+    const res = await fetch(`https://r.jina.ai/${url}`, {
+      headers: {
+        'Authorization': `Bearer ${JINA_API_KEY}`,
+        'X-Return-Format': 'html',
+      },
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!res.ok) return { emails: [], html: '' };
+
+    const html = await res.text();
+    const matches = html.match(EMAIL_REGEX) || [];
+    const emails = [...new Set(matches)].filter((e) => {
+      const lower = e.toLowerCase();
+      return !lower.includes('example') && !lower.includes('yourdomain') &&
+        !lower.endsWith('.png') && !lower.endsWith('.jpg') &&
+        !lower.startsWith('webmaster@') && !lower.startsWith('noreply@') &&
+        !lower.includes('sinbiweb') && !lower.includes('wixpress') &&
+        !lower.includes('wordpress') && !lower.includes('squarespace');
+    });
+
+    return { emails, html };
+  } catch {
+    return { emails: [], html: '' };
+  }
+}
+
+// HTML이 너무 작으면 JS 렌더링 사이트로 판단
+const MIN_HTML_SIZE = 3000;
+
 // 내부 링크 추출
 function extractInternalLinks(html: string, baseUrl: string): string[] {
   const hrefRegex = /href="([^"]+)"/gi;
@@ -53,14 +89,22 @@ async function fetchAndExtractEmails(url: string): Promise<string[]> {
     const html = await res.text();
     const matches = html.match(EMAIL_REGEX) || [];
 
-    // 가짜 이메일 필터링
+    // 가짜/시스템 이메일 필터링
     return matches.filter((email) => {
       const lower = email.toLowerCase();
       return !lower.includes('example.com') &&
         !lower.includes('yourdomain') &&
         !lower.includes('email@') &&
         !lower.endsWith('.png') &&
-        !lower.endsWith('.jpg');
+        !lower.endsWith('.jpg') &&
+        !lower.startsWith('webmaster@') &&
+        !lower.startsWith('noreply@') &&
+        !lower.startsWith('no-reply@') &&
+        !lower.startsWith('admin@sinbi') &&
+        !lower.includes('sinbiweb') &&
+        !lower.includes('wixpress') &&
+        !lower.includes('wordpress') &&
+        !lower.includes('squarespace');
     });
   } catch {
     return [];
@@ -159,43 +203,66 @@ async function enrichLead(leadId: string) {
 
   const baseUrl = lead.website.replace(/\/$/, '');
 
-  // 1단계: 메인 페이지 크롤링 + 내부 링크 수집
-  const mainRes = await fetch(baseUrl, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(10000),
-  });
+  // 1단계: 메인 페이지 크롤링 시도
+  let usedApifyFallback = false;
+  let mainHtml = '';
 
-  if (!mainRes.ok) {
-    return { ...result, message: `웹사이트 접근 실패: ${mainRes.status}` };
+  try {
+    const mainRes = await fetch(baseUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!mainRes.ok) throw new Error(`HTTP ${mainRes.status}`);
+    mainHtml = await mainRes.text();
+  } catch {
+    mainHtml = '';
   }
 
-  const mainHtml = await mainRes.text();
-  const mainEmails = (mainHtml.match(EMAIL_REGEX) || []).filter((e) => !e.includes('example'));
-  result.emails_found.push(...mainEmails);
-  result.pages_crawled = 1;
+  // fetch 실패 또는 HTML이 너무 작으면 (JS 렌더링 사이트) → Jina fallback
+  if (mainHtml.length < MIN_HTML_SIZE) {
+    const jinaResult = await crawlWithJina(baseUrl);
+    if (jinaResult.html.length > 0) {
+      usedApifyFallback = true;
+      result.emails_found.push(...jinaResult.emails);
+      result.pages_crawled = 1;
+      result.crawl_method = 'jina_reader';
+      mainHtml = jinaResult.html; // 기술 분석에도 사용
+    } else if (mainHtml.length === 0) {
+      return { ...result, message: '웹사이트 접근 실패 (fetch + Jina 모두 실패)' };
+    }
+  }
 
-  // 내부 링크 수집
-  let links = extractInternalLinks(mainHtml, baseUrl);
+  // fetch가 성공한 경우 일반 크롤링
+  if (!usedApifyFallback && mainHtml.length >= MIN_HTML_SIZE) {
+    result.crawl_method = 'fetch';
+    const mainEmails = (mainHtml.match(EMAIL_REGEX) || []).filter((e: string) => !e.includes('example'));
+    result.emails_found.push(...mainEmails);
+    result.pages_crawled = 1;
 
-  // 우선순위 키워드가 포함된 링크를 앞으로 정렬
-  links.sort((a, b) => {
-    const aScore = PRIORITY_KEYWORDS.some((kw) => a.toLowerCase().includes(kw)) ? 0 : 1;
-    const bScore = PRIORITY_KEYWORDS.some((kw) => b.toLowerCase().includes(kw)) ? 0 : 1;
-    return aScore - bScore;
-  });
+    // 내부 링크 수집
+    let links = extractInternalLinks(mainHtml, baseUrl);
 
-  // 최대 15개 페이지만 크롤링
-  const pagesToCrawl = links.slice(0, 15);
+    // 우선순위 키워드가 포함된 링크를 앞으로 정렬
+    links.sort((a, b) => {
+      const aScore = PRIORITY_KEYWORDS.some((kw) => a.toLowerCase().includes(kw)) ? 0 : 1;
+      const bScore = PRIORITY_KEYWORDS.some((kw) => b.toLowerCase().includes(kw)) ? 0 : 1;
+      return aScore - bScore;
+    });
 
-  // 2단계: 서브페이지 크롤링 (이메일 추출)
-  for (const link of pagesToCrawl) {
-    const emails = await fetchAndExtractEmails(link);
-    result.emails_found.push(...emails);
-    result.pages_crawled++;
+    // 최대 15개 페이지만 크롤링
+    const pagesToCrawl = links.slice(0, 15);
 
-    // 이메일 찾으면 조기 종료 (효율)
-    if (result.emails_found.length >= 3) break;
+    // 2단계: 서브페이지 크롤링 (이메일 추출)
+    for (const link of pagesToCrawl) {
+      const emails = await fetchAndExtractEmails(link);
+      result.emails_found.push(...emails);
+      result.pages_crawled++;
+
+      // 이메일 찾으면 조기 종료 (효율)
+      if (result.emails_found.length >= 3) break;
+    }
   }
 
   // 중복 제거
