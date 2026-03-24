@@ -11,16 +11,29 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
 });
 
 // ── 스크립트 실행 ──────────────────────────────────────────
+// stdout에서 JSON 라인만 추출 (dotenv 로그 등 제거)
+function extractJson(output: string): any {
+  const lines = output.split('\n');
+  // 뒤에서부터 { 로 시작하는 줄 찾기
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line.startsWith('{')) {
+      return JSON.parse(line);
+    }
+  }
+  throw new Error('JSON not found in output');
+}
+
 function runScript(name: string, args: string[] = []): any {
   try {
     const cmd = `npx tsx scripts/${name}.ts ${args.join(' ')}`;
     const output = execSync(cmd, { encoding: 'utf-8', cwd: process.cwd(), timeout: 300_000 });
-    return JSON.parse(output.trim());
+    return extractJson(output);
   } catch (err: any) {
     const stderr = err.stderr?.toString() || '';
     const stdout = err.stdout?.toString() || '';
     try {
-      return JSON.parse(stdout.trim() || stderr.trim());
+      return extractJson(stdout || stderr);
     } catch {
       return { error: `${name} 실행 실패: ${stderr || stdout || err.message}` };
     }
