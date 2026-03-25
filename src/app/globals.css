@@ -24,3 +24,14 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* 이메일 HTML 미리보기에서 리스트 스타일 복원 */
+details ul, details ol,
+[dangerouslysetinnerhtml] ul {
+  list-style-type: disc !important;
+  padding-left: 24px !important;
+}
+details li, [dangerouslysetinnerhtml] li {
+  display: list-item !important;
+  list-style-type: disc !important;
+}
