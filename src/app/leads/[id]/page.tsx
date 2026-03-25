@@ -144,8 +144,14 @@ export default async function LeadDetailPage({
               </thead>
               <tbody>
                 {emailLogs.map((log: any) => (
+                  <>
                   <tr key={log.id} className="border-t border-gray-100">
-                    <td className="px-4 py-2">{log.subject}</td>
+                    <td className="px-4 py-2">
+                      <details>
+                        <summary className="cursor-pointer hover:underline">{log.subject}</summary>
+                        <div className="mt-2 border border-gray-200 rounded-lg p-4 bg-white" dangerouslySetInnerHTML={{ __html: log.body_html }} />
+                      </details>
+                    </td>
                     <td className="px-4 py-2">
                       <span
                         className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
@@ -180,6 +186,7 @@ export default async function LeadDetailPage({
                       ) : <span className="text-gray-300 text-xs">-</span>}
                     </td>
                   </tr>
+                  </>
                 ))}
               </tbody>
             </table>
