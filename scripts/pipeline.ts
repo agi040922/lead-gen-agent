@@ -71,6 +71,7 @@ interface PipelineContext {
   filterThreshold: number;
   filteredCount: number;
   draftedCount: number;
+  sentCount: number;
   phoneOnlyCount: number;
   errors: { step: string; message: string }[];
   decisions: string[];  // 오케스트레이터가 내린 판단 기록
@@ -81,7 +82,7 @@ function createContext(region: string, keyword: string, count: number): Pipeline
     region, keyword, targetCount: count,
     collectedCount: 0, emailRate: 0, enrichedCount: 0,
     avgScore: 0, filterThreshold: 60, filteredCount: 0,
-    draftedCount: 0, phoneOnlyCount: 0,
+    draftedCount: 0, sentCount: 0, phoneOnlyCount: 0,
     errors: [], decisions: [],
   };
 }
@@ -174,6 +175,7 @@ function generateReport(ctx: PipelineContext, results: Record<string, any>): any
     { step: '점수', count: results.score?.scored || 0, note: `평균: ${ctx.avgScore}점` },
     { step: '필터', count: ctx.filteredCount, note: `기준: ${ctx.filterThreshold}점` },
     { step: '이메일 초안', count: ctx.draftedCount },
+    ...(ctx.sentCount > 0 ? [{ step: '발송', count: ctx.sentCount }] : []),
   ];
 
   // 전환율 계산
@@ -195,6 +197,7 @@ function generateReport(ctx: PipelineContext, results: Record<string, any>): any
       filter_threshold: ctx.filterThreshold,
       filtered: ctx.filteredCount,
       emails_drafted: ctx.draftedCount,
+      emails_sent: ctx.sentCount,
       phone_only: ctx.phoneOnlyCount,
     },
     funnel,
@@ -212,10 +215,12 @@ function generateReport(ctx: PipelineContext, results: Record<string, any>): any
 async function main() {
   const [region, keyword, countStr] = process.argv.slice(2);
 
+  const autoSend = process.argv.includes('--send');
+
   if (!region || !keyword) {
     console.error(JSON.stringify({
-      error: '사용법: npx tsx scripts/pipeline.ts <지역> <키워드> [수량]',
-      example: 'npx tsx scripts/pipeline.ts 서울 제조공장 50',
+      error: '사용법: npx tsx scripts/pipeline.ts <지역> <키워드> [수량] [--send]',
+      example: 'npx tsx scripts/pipeline.ts 서울 제조공장 50 --send',
     }));
     process.exit(1);
   }
@@ -334,13 +339,46 @@ async function main() {
     log(`   📞 전화 영업 대상: ${ctx.phoneOnlyCount}개`);
   }
 
+  // ── 6단계: 이메일 발송 (--send 플래그 시) ─────────────────
+  if (autoSend && ctx.draftedCount > 0) {
+    log(`\n[6/6] 📤 이메일 발송 중... (--send 활성화)`);
+
+    // pending 상태의 이메일이 있는 리드 조회
+    const { data: pendingLogs } = await supabase
+      .from('email_logs')
+      .select('lead_id')
+      .eq('status', 'pending');
+
+    const leadIds = [...new Set((pendingLogs || []).map((l) => l.lead_id).filter(Boolean))];
+    let sent = 0;
+    let sendErrors = 0;
+
+    for (const leadId of leadIds) {
+      const result = runScript('send-email', [leadId]);
+      if (result.error) {
+        sendErrors++;
+      } else {
+        sent++;
+      }
+    }
+
+    ctx.sentCount = sent;
+    if (sendErrors > 0) {
+      ctx.errors.push({ step: 'send-email', message: `${sendErrors}개 발송 실패` });
+    }
+    log(`   ✅ ${sent}개 발송 완료${sendErrors > 0 ? ` (${sendErrors}개 실패)` : ''}`);
+    ctx.decisions.push(`--send 플래그 → ${sent}개 이메일 자동 발송`);
+  } else if (!autoSend && ctx.draftedCount > 0) {
+    log(`\n   💡 이메일 ${ctx.draftedCount}개 대기 중 — 발송하려면 --send 플래그를 추가하세요`);
+  }
+
   // ── 최종 보고서 ─────────────────────────────────────────
   const report = generateReport(ctx, results);
 
   log('\n══════════════════════════════════════════');
   log('📋 파이프라인 완료 보고서');
   log('══════════════════════════════════════════');
-  log(`수집: ${ctx.collectedCount} → 보강: ${ctx.enrichedCount} → 필터(${ctx.filterThreshold}점): ${ctx.filteredCount} → 이메일: ${ctx.draftedCount}`);
+  log(`수집: ${ctx.collectedCount} → 보강: ${ctx.enrichedCount} → 필터(${ctx.filterThreshold}점): ${ctx.filteredCount} → 이메일: ${ctx.draftedCount}${ctx.sentCount > 0 ? ` → 발송: ${ctx.sentCount}` : ''}`);
   log(`이메일 보유율: ${(ctx.emailRate * 100).toFixed(0)}% | 평균 점수: ${ctx.avgScore}점`);
   if (ctx.phoneOnlyCount > 0) log(`📞 전화 영업 대상: ${ctx.phoneOnlyCount}개`);
   if (ctx.decisions.length > 0) {
